@@ -1,0 +1,204 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { menuService } from "@/services/menu.service";
+
+export default function MenuCreatePage() {
+  const router = useRouter();
+
+  const [menus, setMenus] = useState<any[]>([]);
+  const [form, setForm] = useState({
+    name: "",
+    link: "",
+    type: "custom",
+    position: "mainmenu",
+    parent_id: 0,
+    sort_order: 0,
+    status: 1,
+  });
+
+  // Load menu list cho parent_id
+  useEffect(() => {
+    menuService.all().then((res) => {
+      setMenus(res.data?.data ?? res.data);
+    });
+  }, []);
+
+  const handleSubmit = async (e: any) => {
+    e.preventDefault();
+
+    try {
+      await menuService.create(form);
+      router.push("/admin/menus");
+    } catch (err) {
+      console.error("Create menu error:", err);
+      alert("Không thể tạo menu. Kiểm tra lại dữ liệu!");
+    }
+  };
+
+  return (
+    <div className="p-6 flex justify-center">
+
+      {/* CARD GLASS WRAPPER */}
+      <div
+        className="
+          w-full max-w-2xl p-8 rounded-2xl
+          bg-white/40 backdrop-blur-md
+          border border-gray-300
+          shadow-[0_0_25px_rgba(90,120,255,0.25)]
+        "
+      >
+        <h1 className="text-2xl font-semibold text-black mb-6">
+          Create Menu
+        </h1>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+
+          {/* NAME */}
+          <div>
+            <label className="text-black font-medium">Menu Name</label>
+            <input
+              className="
+                w-full px-4 py-3 rounded-lg mt-1
+                bg-white/70 border border-gray-300 text-black
+                placeholder-gray-500
+                focus:border-blue-500 focus:ring focus:ring-blue-300/40
+              "
+              placeholder="Enter menu name"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              required
+            />
+          </div>
+
+          {/* LINK */}
+          <div>
+            <label className="text-black font-medium">Link (optional)</label>
+            <input
+              className="
+                w-full px-4 py-3 rounded-lg mt-1
+                bg-white/70 border border-gray-300 text-black
+                placeholder-gray-500
+                focus:border-blue-500 focus:ring focus:ring-blue-300/40
+              "
+              placeholder="/products, /posts, https://..."
+              value={form.link}
+              onChange={(e) => setForm({ ...form, link: e.target.value })}
+            />
+          </div>
+
+          {/* TYPE */}
+          <div>
+            <label className="text-black font-medium">Menu Type</label>
+            <select
+              className="
+                w-full px-4 py-3 rounded-lg mt-1
+                bg-white/70 border border-gray-300 text-black
+                focus:border-blue-500 focus:ring focus:ring-blue-300/40
+              "
+              value={form.type}
+              onChange={(e) => setForm({ ...form, type: e.target.value })}
+            >
+              <option value="custom">Custom</option>
+              <option value="category">Category</option>
+              <option value="topic">Topic</option>
+              <option value="page">Page</option>
+            </select>
+          </div>
+
+          {/* PARENT MENU */}
+          <div>
+            <label className="text-black font-medium">Parent Menu</label>
+            <select
+              className="
+                w-full px-4 py-3 rounded-lg mt-1
+                bg-white/70 border border-gray-300 text-black
+                focus:border-blue-500 focus:ring focus:ring-blue-300/40
+              "
+              value={form.parent_id}
+              onChange={(e) =>
+                setForm({ ...form, parent_id: Number(e.target.value) })
+              }
+            >
+              <option value={0}>No Parent</option>
+
+              {menus.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* POSITION */}
+          <div>
+            <label className="text-black font-medium">Menu Position</label>
+            <select
+              className="
+                w-full px-4 py-3 rounded-lg mt-1
+                bg-white/70 border border-gray-300 text-black
+                focus:border-blue-500 focus:ring focus:ring-blue-300/40
+              "
+              value={form.position}
+              onChange={(e) => setForm({ ...form, position: e.target.value })}
+            >
+              <option value="mainmenu">Main Menu</option>
+              <option value="footermenu">Footer Menu</option>
+            </select>
+          </div>
+
+          {/* SORT ORDER */}
+          <div>
+            <label className="text-black font-medium">Sort Order</label>
+            <input
+              type="number"
+              className="
+                w-full px-4 py-3 rounded-lg mt-1
+                bg-white/70 border border-gray-300 text-black
+                focus:border-blue-500 focus:ring focus:ring-blue-300/40
+              "
+              placeholder="0"
+              value={form.sort_order}
+              onChange={(e) =>
+                setForm({ ...form, sort_order: Number(e.target.value) })
+              }
+            />
+          </div>
+
+          {/* STATUS */}
+          <div>
+            <label className="text-black font-medium">Status</label>
+            <select
+              className="
+                w-full px-4 py-3 rounded-lg mt-1
+                bg-white/70 border border-gray-300 text-black
+                focus:border-blue-500 focus:ring focus:ring-blue-300/40
+              "
+              value={form.status}
+              onChange={(e) =>
+                setForm({ ...form, status: Number(e.target.value) })
+              }
+            >
+              <option value={1}>Active</option>
+              <option value={0}>Hidden</option>
+            </select>
+          </div>
+
+          {/* BUTTON */}
+          <button
+            className="
+              w-full py-3 rounded-lg font-semibold text-white
+              bg-gradient-to-r from-blue-600 to-indigo-600
+              hover:from-blue-700 hover:to-indigo-700
+              shadow-[0_0_15px_rgba(90,120,255,0.4)]
+              transition
+            "
+          >
+            Save Menu
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
