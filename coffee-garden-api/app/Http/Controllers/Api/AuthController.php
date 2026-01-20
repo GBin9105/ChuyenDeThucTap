@@ -31,7 +31,11 @@ class AuthController extends Controller
             'email'    => $validated['email'],
             'username' => $validated['username'],
             'phone'    => $validated['phone'] ?? null,
-            'password' => Hash::make($validated['password']),
+
+            // ✅ User model đã có setPasswordAttribute -> tự hash nếu chưa hash
+            // => không cần Hash::make ở đây (tránh double-hash)
+            'password' => $validated['password'],
+
             'roles'    => 'user',
             'status'   => 1,
         ]);
@@ -77,9 +81,6 @@ class AuthController extends Controller
                 'message' => 'Tài khoản đã bị khóa!'
             ], 403);
         }
-
-        // (Khuyến nghị) Nếu bạn muốn 1 user chỉ có 1 token active cho client:
-        // $user->tokens()->where('name', 'client_token')->delete();
 
         $token = $user->createToken('client_token')->plainTextToken;
 
@@ -132,16 +133,13 @@ class AuthController extends Controller
                 Rule::unique('users', 'email')->ignore($user->id),
             ],
 
+            // ✅ phone vẫn nullable
             'phone' => ['nullable', 'string', 'max:20'],
 
-            // ✅ đổi mật khẩu: nếu có password thì current_password là bắt buộc
             'current_password' => [$changingPassword ? 'required' : 'nullable', 'string'],
-
-            // ✅ password confirmed -> yêu cầu password_confirmation
             'password' => ['nullable', 'string', 'min:6', 'confirmed'],
         ]);
 
-        // ✅ Check mật khẩu hiện tại nếu đang đổi mật khẩu
         if ($changingPassword) {
             $current = (string) ($validated['current_password'] ?? '');
 
@@ -155,10 +153,20 @@ class AuthController extends Controller
         $user->name     = $validated['name'];
         $user->username = $validated['username'];
         $user->email    = $validated['email'];
-        $user->phone    = $validated['phone'] ?? null;
+
+        /**
+         * ✅ FIX QUAN TRỌNG:
+         * Chỉ update phone khi FE có gửi field 'phone'
+         * Nếu FE không gửi phone (ví dụ đổi mật khẩu), giữ nguyên phone hiện tại.
+         */
+        if ($request->has('phone')) {
+            // cho phép set null nếu FE gửi phone = null / ""
+            $user->phone = $validated['phone'] ?? null;
+        }
 
         if ($changingPassword) {
-            $user->password = Hash::make($validated['password']);
+            // ✅ User model tự hash -> không cần Hash::make
+            $user->password = $validated['password'];
         }
 
         $user->save();
@@ -178,10 +186,6 @@ class AuthController extends Controller
      */
     public function logout(Request $request)
     {
-        // Xóa token hiện tại (khuyến nghị hơn xóa hết)
-        // $request->user()->currentAccessToken()->delete();
-
-        // Nếu bạn muốn logout 1 phát cho mọi nơi (admin + client) thì giữ delete all:
         $request->user()->tokens()->delete();
 
         return response()->json([

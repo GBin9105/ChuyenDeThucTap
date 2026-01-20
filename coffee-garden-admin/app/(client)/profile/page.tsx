@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
@@ -11,8 +11,7 @@ type User = {
   name?: string;
   username?: string;
   email?: string;
-  role?: string | null;
-  roles?: any; // có thể là string | array | object tuỳ BE
+  phone?: string | null; // ✅ thêm phone
 };
 
 function apiErrorMessage(e: any, fallback = "Thao tác thất bại.") {
@@ -33,28 +32,6 @@ function apiErrorMessage(e: any, fallback = "Thao tác thất bại.") {
     e?.message ||
     fallback
   );
-}
-
-function normalizeRoles(u: User | null) {
-  if (!u) return "—";
-
-  if (typeof u.roles === "string" && u.roles.trim()) return u.roles;
-  if (typeof u.role === "string" && u.role.trim()) return u.role;
-
-  if (Array.isArray(u.roles)) {
-    const names = u.roles
-      .map((r: any) => (typeof r === "string" ? r : r?.name ?? r?.slug ?? ""))
-      .filter(Boolean);
-    if (names.length) return names.join(", ");
-  }
-
-  // fallback
-  if (u.roles && typeof u.roles === "object") {
-    const maybeName = u.roles?.name ?? u.roles?.slug;
-    if (maybeName) return String(maybeName);
-  }
-
-  return "—";
 }
 
 function extractUserFromResponse(resp: any): User | null {
@@ -88,7 +65,9 @@ async function fetchProfile() {
  * Update profile OR change password (CURRENT USER)
  * BE: PUT /api/auth/me
  */
-async function updateProfile(payload: any): Promise<{ user: User | null; message?: string }> {
+async function updateProfile(
+  payload: any
+): Promise<{ user: User | null; message?: string }> {
   const res = await api.put("/auth/me", payload);
   const raw = res?.data ?? res;
   return {
@@ -104,10 +83,16 @@ export default function ProfilePage() {
 
   // edit mode (profile)
   const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState<{ name: string; username: string; email: string }>({
+  const [draft, setDraft] = useState<{
+    name: string;
+    username: string;
+    email: string;
+    phone: string; // ✅ phone trong draft
+  }>({
     name: "",
     username: "",
     email: "",
+    phone: "",
   });
 
   // change password mode
@@ -127,8 +112,6 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<string>("");
-
-  const roleText = useMemo(() => normalizeRoles(user), [user]);
 
   /* =========================
      CHECK AUTH + LOAD PROFILE
@@ -156,6 +139,7 @@ export default function ProfilePage() {
         name: String(parsed.name ?? ""),
         username: String(parsed.username ?? ""),
         email: String(parsed.email ?? ""),
+        phone: String(parsed.phone ?? ""),
       });
     }
 
@@ -171,6 +155,7 @@ export default function ProfilePage() {
             name: String(fresh.name ?? ""),
             username: String(fresh.username ?? ""),
             email: String(fresh.email ?? ""),
+            phone: String(fresh.phone ?? ""),
           });
           localStorage.setItem("user", JSON.stringify(fresh));
         }
@@ -211,6 +196,7 @@ export default function ProfilePage() {
         name: String(user.name ?? ""),
         username: String(user.username ?? ""),
         email: String(user.email ?? ""),
+        phone: String(user.phone ?? ""),
       });
     }
     setIsEditing(true);
@@ -224,6 +210,7 @@ export default function ProfilePage() {
         name: String(user.name ?? ""),
         username: String(user.username ?? ""),
         email: String(user.email ?? ""),
+        phone: String(user.phone ?? ""),
       });
     }
     setIsEditing(false);
@@ -238,6 +225,7 @@ export default function ProfilePage() {
     const name = draft.name.trim();
     const username = draft.username.trim();
     const email = draft.email.trim();
+    const phone = draft.phone.trim(); // ✅ phone
 
     if (!name || !username || !email) {
       setError("Vui lòng nhập đầy đủ Name, Username, Email.");
@@ -246,13 +234,14 @@ export default function ProfilePage() {
 
     setSaving(true);
     try {
-      const payload: any = { name, username, email };
+      // ✅ gửi thêm phone (nullable ok)
+      const payload: any = { name, username, email, phone: phone ? phone : null };
 
       const { user: updatedFromServer, message } = await updateProfile(payload);
 
       const merged: User = updatedFromServer
         ? updatedFromServer
-        : { ...user, name, username, email };
+        : { ...user, name, username, email, phone: phone ? phone : null };
 
       setUser(merged);
       localStorage.setItem("user", JSON.stringify(merged));
@@ -283,7 +272,6 @@ export default function ProfilePage() {
     setSuccess("");
     setError("");
 
-    // tránh đổi mật khẩu khi đang sửa profile (tránh gửi nhầm draft chưa lưu)
     if (isEditing) {
       setError("Vui lòng lưu hoặc hủy chỉnh sửa profile trước khi đổi mật khẩu.");
       return;
@@ -319,7 +307,9 @@ export default function ProfilePage() {
     const password_confirmation = pwDraft.password_confirmation.trim();
 
     if (!current_password || !password || !password_confirmation) {
-      setError("Vui lòng nhập đầy đủ mật khẩu hiện tại, mật khẩu mới và xác nhận mật khẩu.");
+      setError(
+        "Vui lòng nhập đầy đủ mật khẩu hiện tại, mật khẩu mới và xác nhận mật khẩu."
+      );
       return;
     }
 
@@ -334,17 +324,21 @@ export default function ProfilePage() {
     }
 
     // Backend yêu cầu name/username/email luôn required trong updateMe
+    // ✅ gửi kèm phone luôn để BE không bị thiếu nếu BE validate phone
     const payload = {
       name: String(user.name ?? ""),
       username: String(user.username ?? ""),
       email: String(user.email ?? ""),
+      phone: user.phone ?? null,
       current_password,
       password,
       password_confirmation,
     };
 
     if (!payload.name || !payload.username || !payload.email) {
-      setError("Thiếu thông tin profile hiện tại (name/username/email). Vui lòng đăng nhập lại.");
+      setError(
+        "Thiếu thông tin profile hiện tại (name/username/email). Vui lòng đăng nhập lại."
+      );
       return;
     }
 
@@ -352,7 +346,6 @@ export default function ProfilePage() {
     try {
       const { user: updatedFromServer, message } = await updateProfile(payload);
 
-      // cập nhật user (nếu BE trả về user)
       if (updatedFromServer) {
         setUser(updatedFromServer);
         localStorage.setItem("user", JSON.stringify(updatedFromServer));
@@ -417,7 +410,9 @@ export default function ProfilePage() {
           {/* TITLE */}
           <div className="text-center mb-8">
             <h1 className="text-4xl font-extrabold tracking-wide">Profile</h1>
-            <p className="text-amber-500 mt-2 font-semibold">Coffee Garden Member</p>
+            <p className="text-amber-500 mt-2 font-semibold">
+              Coffee Garden Member
+            </p>
           </div>
 
           {/* STATUS */}
@@ -442,7 +437,9 @@ export default function ProfilePage() {
                 {isEditing ? (
                   <input
                     value={draft.username}
-                    onChange={(e) => setDraft((p) => ({ ...p, username: e.target.value }))}
+                    onChange={(e) =>
+                      setDraft((p) => ({ ...p, username: e.target.value }))
+                    }
                     className="w-56 max-w-[60%] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
                     placeholder="Username"
                     disabled={saving}
@@ -458,7 +455,9 @@ export default function ProfilePage() {
                 {isEditing ? (
                   <input
                     value={draft.name}
-                    onChange={(e) => setDraft((p) => ({ ...p, name: e.target.value }))}
+                    onChange={(e) =>
+                      setDraft((p) => ({ ...p, name: e.target.value }))
+                    }
                     className="w-56 max-w-[60%] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
                     placeholder="Name"
                     disabled={saving}
@@ -474,7 +473,9 @@ export default function ProfilePage() {
                 {isEditing ? (
                   <input
                     value={draft.email}
-                    onChange={(e) => setDraft((p) => ({ ...p, email: e.target.value }))}
+                    onChange={(e) =>
+                      setDraft((p) => ({ ...p, email: e.target.value }))
+                    }
                     className="w-56 max-w-[60%] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
                     placeholder="Email"
                     disabled={saving}
@@ -484,10 +485,22 @@ export default function ProfilePage() {
                 )}
               </div>
 
-              {/* Role */}
+              {/* ✅ PHONE (replace Role) */}
               <div className="flex items-center justify-between bg-gray-100 rounded-lg px-4 py-3">
-                <span className="font-semibold">Role</span>
-                <span className="uppercase">{roleText}</span>
+                <span className="font-semibold">Phone</span>
+                {isEditing ? (
+                  <input
+                    value={draft.phone}
+                    onChange={(e) =>
+                      setDraft((p) => ({ ...p, phone: e.target.value }))
+                    }
+                    className="w-56 max-w-[60%] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
+                    placeholder="Phone"
+                    disabled={saving}
+                  />
+                ) : (
+                  <span>{user.phone ?? "—"}</span>
+                )}
               </div>
             </div>
 
@@ -548,12 +561,13 @@ export default function ProfilePage() {
                   onClick={startChangePassword}
                   disabled={saving}
                   className="
-                  w-full py-3 rounded-lg
-                  bg-amber-400 text-black
-                  font-semibold text-lg
-                  hover:bg-amber-300
-                  transition
-                  disabled:opacity-60                  "
+                    w-full py-3 rounded-lg
+                    bg-amber-400 text-black
+                    font-semibold text-lg
+                    hover:bg-amber-300
+                    transition
+                    disabled:opacity-60
+                  "
                 >
                   Đổi mật khẩu
                 </button>
@@ -566,7 +580,10 @@ export default function ProfilePage() {
                       type="password"
                       value={pwDraft.current_password}
                       onChange={(e) =>
-                        setPwDraft((p) => ({ ...p, current_password: e.target.value }))
+                        setPwDraft((p) => ({
+                          ...p,
+                          current_password: e.target.value,
+                        }))
                       }
                       className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
                       placeholder="Mật khẩu hiện tại"
@@ -576,7 +593,9 @@ export default function ProfilePage() {
                     <input
                       type="password"
                       value={pwDraft.password}
-                      onChange={(e) => setPwDraft((p) => ({ ...p, password: e.target.value }))}
+                      onChange={(e) =>
+                        setPwDraft((p) => ({ ...p, password: e.target.value }))
+                      }
                       className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
                       placeholder="Mật khẩu mới"
                       disabled={saving}
@@ -586,7 +605,10 @@ export default function ProfilePage() {
                       type="password"
                       value={pwDraft.password_confirmation}
                       onChange={(e) =>
-                        setPwDraft((p) => ({ ...p, password_confirmation: e.target.value }))
+                        setPwDraft((p) => ({
+                          ...p,
+                          password_confirmation: e.target.value,
+                        }))
                       }
                       className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
                       placeholder="Xác nhận mật khẩu mới"
@@ -661,7 +683,6 @@ export default function ProfilePage() {
               >
                 Logout
               </button>
-
             </div>
           </div>
 
