@@ -54,6 +54,7 @@ export default function InventoryPage() {
     } catch (err) {
       console.error(err);
       setItems([]);
+      setError("Không thể tải dữ liệu kho. Vui lòng thử lại.");
     } finally {
       setLoading(false);
     }
@@ -217,9 +218,21 @@ export default function InventoryPage() {
   return (
     <div className="p-6">
       <div className="p-6 bg-white/40 backdrop-blur-md rounded-2xl border shadow">
-        <h1 className="text-2xl font-semibold mb-6">Quản lý kho hàng</h1>
+        <div className="flex items-center justify-between gap-3 mb-6">
+          <h1 className="text-2xl font-semibold">Quản lý kho hàng</h1>
 
-        {/* ✅ SEARCH + CONFIRM BUTTON (góc phải) */}
+          {/* ✅ RELOAD BUTTON */}
+          <button
+            onClick={loadInventory}
+            disabled={loading || saving}
+            className="px-4 py-2 rounded border bg-white font-semibold hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Tải lại dữ liệu kho"
+          >
+            {loading ? "Đang tải..." : "Reload"}
+          </button>
+        </div>
+
+        {/* ✅ SEARCH + CONFIRM BUTTON */}
         <div className="mb-4 flex items-center justify-between gap-3">
           <input
             value={search}
@@ -230,7 +243,7 @@ export default function InventoryPage() {
 
           <button
             onClick={openConfirm}
-            disabled={draftCount === 0 || saving}
+            disabled={draftCount === 0 || saving || loading}
             className="px-4 py-2 rounded bg-blue-600 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
             title={
               draftCount === 0
@@ -377,7 +390,7 @@ export default function InventoryPage() {
           </div>
         )}
 
-        {/* ================= HISTORY MODAL (giữ nguyên) ================= */}
+        {/* ================= HISTORY MODAL ================= */}
         {showHistory && historyProduct && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
             <div className="bg-white rounded-xl p-6 w-full max-w-2xl">
@@ -489,6 +502,7 @@ function InventoryRow({
           value={costPrice}
           onChange={(e) => onChange(stock, Number(e.target.value))}
           className="w-28 px-2 py-1 border rounded"
+          disabled={saving}
         />
       </td>
 
@@ -499,6 +513,7 @@ function InventoryRow({
           value={stock}
           onChange={(e) => onChange(Number(e.target.value), costPrice)}
           className="w-20 px-2 py-1 border rounded"
+          disabled={saving}
         />
       </td>
 
@@ -506,6 +521,7 @@ function InventoryRow({
         <button
           onClick={onHistory}
           className="px-3 py-1 text-xs rounded bg-blue-600 text-white"
+          disabled={saving}
         >
           Lịch sử
         </button>
