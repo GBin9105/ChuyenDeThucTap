@@ -3,18 +3,18 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Mail\OrderPaidMail;
 use App\Models\Cart;
 use App\Models\Order;
 use App\Models\Product;
+use App\Models\ProductInventory;
 use App\Services\VNPayService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Mail;
-use App\Mail\OrderPaidMail;
-
 
 class VNPayController extends Controller
 {
@@ -91,8 +91,9 @@ class VNPayController extends Controller
                             ->where('product_id', (int) $product->id)
                             ->lockForUpdate()
                             ->first();
-                        if ($inv)
+                        if ($inv) {
                             $inventoryStock = (int) ($inv->stock ?? 0);
+                        }
                     }
 
                     $stock = null;
@@ -117,10 +118,12 @@ class VNPayController extends Controller
                     $grandTotal += $lineTotal;
 
                     $thumb = null;
-                    if ($product?->galleryMainImage?->image)
+                    if ($product?->galleryMainImage?->image) {
                         $thumb = $product->galleryMainImage->image;
-                    if (!$thumb && isset($product->thumbnail))
+                    }
+                    if (!$thumb && isset($product->thumbnail)) {
                         $thumb = $product->thumbnail;
+                    }
 
                     $detailsPayload[] = [
                         'product_id' => (int) $product->id,
@@ -171,6 +174,7 @@ class VNPayController extends Controller
 
                 $order->paid_at = null;
                 $order->vnp_TxnRef = null;
+                $order->inventory_deducted_at = null; // ✅ cột mới
 
                 $order->save();
 
@@ -213,7 +217,6 @@ class VNPayController extends Controller
                 'order_id' => $order->id,
                 'order_code' => $order->order_code,
             ], 200);
-
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         } catch (\Throwable $e) {
@@ -283,7 +286,10 @@ class VNPayController extends Controller
             $ok = $this->finalizeSuccess($txnRef, $amount, $request->query());
 
             // luôn trả 00 nếu bạn đã xử lý hoặc đã xử lý trước đó (idempotent)
-            return response()->json(['RspCode' => $ok ? '00' : '01', 'Message' => $ok ? 'Confirm Success' : 'Order not found / amount mismatch'], 200);
+            return response()->json([
+                'RspCode' => $ok ? '00' : '01',
+                'Message' => $ok ? 'Confirm Success' : 'Order not found / amount mismatch',
+            ], 200);
         }
 
         // payment failed
@@ -292,52 +298,48 @@ class VNPayController extends Controller
     }
 
     /**
-     * SUCCESS: update order paid + clear cart theo order->user_id
-     * Idempotent: nếu order đã success thì return true.
+     * SUCCESS: update order paid + trừ kho (idempotent) + clear cart + send mail (1 lần)
      */
     private function finalizeSuccess(string $txnRef, string $vnpAmount, array $rawQuery): bool
     {
-        if ($txnRef === '')
-            return false;
+        if ($txnRef === '') return false;
 
         try {
             return (bool) DB::transaction(function () use ($txnRef, $vnpAmount, $rawQuery) {
                 /** @var Order|null $order */
                 $order = Order::where('vnp_TxnRef', $txnRef)->lockForUpdate()->first();
-
                 if (!$order) {
-                    // fallback: nếu bạn dùng txnRef=order_code và normalize khác, có thể thử match order_code
                     $order = Order::where('order_code', $txnRef)->lockForUpdate()->first();
                 }
+                if (!$order) return false;
 
-                if (!$order)
-                    return false;
+                $wasPaid = ($order->payment_status === Order::PAYMENT_SUCCESS);
 
-                // đã paid rồi -> idempotent
-                if ($order->payment_status === Order::PAYMENT_SUCCESS) {
-                    return true;
-                }
+                // amount check (VNPay amount là VND*100) - chỉ check khi chưa paid
+                if (!$wasPaid) {
+                    $expected = $this->toVnpAmount($order->total_price);
+                    $provided = (int) preg_replace('/\D+/', '', (string) $vnpAmount);
 
-                // amount check (VNPay amount là VND*100)
-                $expected = $this->toVnpAmount($order->total_price);
-                $provided = (int) preg_replace('/\D+/', '', (string) $vnpAmount);
+                    if ($provided > 0 && $expected > 0 && $provided !== $expected) {
+                        $order->payment_status = Order::PAYMENT_FAILED;
+                        $order->save();
+                        return false;
+                    }
 
-                if ($provided > 0 && $expected > 0 && $provided !== $expected) {
-                    $order->payment_status = Order::PAYMENT_FAILED;
+                    $order->payment_status = Order::PAYMENT_SUCCESS;
+                    $order->status = Order::STATUS_PAID;
+                    $order->paid_at = now();
                     $order->save();
-                    return false;
                 }
 
-                $order->payment_status = Order::PAYMENT_SUCCESS;
-                $order->status = Order::STATUS_PAID;
-                $order->paid_at = now();
-                $order->save();
+                // ✅ TRỪ KHO (idempotent theo inventory_deducted_at)
+                $this->deductInventoryForOrder($order);
 
-                // CLEAR CART Ở ĐÂY (đây là chỗ bạn đang thiếu)
+                // ✅ clear cart (idempotent)
                 Cart::where('user_id', (int) $order->user_id)->delete();
 
-                // gửi mail cho khách (chỉ gửi 1 lần, vì finalizeSuccess idempotent)
-                if (!empty($order->email)) {
+                // ✅ gửi mail chỉ 1 lần (khi vừa chuyển paid)
+                if (!$wasPaid && !empty($order->email)) {
                     $email = $order->email;
                     $orderId = $order->id;
 
@@ -349,15 +351,13 @@ class VNPayController extends Controller
                     });
                 }
 
-                // (optional) ghi log debug
                 if (config('vnpay.debug')) {
                     Log::info('VNPAY FINALIZE SUCCESS', [
                         'order_id' => $order->id,
                         'user_id' => $order->user_id,
                         'txnRef' => $txnRef,
-                        'expected_vnp_amount' => $expected,
-                        'provided_vnp_amount' => $provided,
                         'query' => $rawQuery,
+                        'inventory_deducted_at' => $order->inventory_deducted_at,
                     ]);
                 }
 
@@ -370,20 +370,80 @@ class VNPayController extends Controller
     }
 
     /**
+     * Trừ tồn kho theo order items (idempotent).
+     * - Dùng product_inventories.stock nếu có (ưu tiên).
+     * - Fallback products.stock nếu project có dùng.
+     */
+    private function deductInventoryForOrder(Order $order): void
+    {
+        // đã trừ rồi thì thôi
+        if (!empty($order->inventory_deducted_at)) {
+            return;
+        }
+
+        $order->loadMissing(['items']);
+
+        foreach ($order->items as $item) {
+            $productId = (int) $item->product_id;
+            $qty = (int) ($item->qty ?? 0);
+            if ($qty <= 0) continue;
+
+            // Ưu tiên: product_inventories (bạn đã có model)
+            if (Schema::hasTable('product_inventories')) {
+                /** @var ProductInventory|null $inv */
+                $inv = ProductInventory::where('product_id', $productId)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$inv) {
+                    throw new \RuntimeException("Không tìm thấy tồn kho (product_id={$productId}).");
+                }
+
+                if ((int) $inv->stock < $qty) {
+                    throw new \RuntimeException("Không đủ tồn kho (product_id={$productId}).");
+                }
+
+                $inv->stock = (int) $inv->stock - $qty;
+                $inv->save();
+
+                continue;
+            }
+
+            // Fallback: products.stock
+            if (Schema::hasColumn('products', 'stock')) {
+                $affected = DB::table('products')
+                    ->where('id', $productId)
+                    ->where('stock', '>=', $qty)
+                    ->decrement('stock', $qty);
+
+                if ($affected === 0) {
+                    throw new \RuntimeException("Không đủ tồn kho (product_id={$productId}).");
+                }
+
+                continue;
+            }
+
+            throw new \RuntimeException('Không xác định được nơi lưu tồn kho.');
+        }
+
+        $order->inventory_deducted_at = now();
+        $order->save();
+    }
+
+    /**
      * FAILED: update order failed (không clear cart).
      */
     private function finalizeFailed(string $txnRef, array $rawQuery): void
     {
-        if ($txnRef === '')
-            return;
+        if ($txnRef === '') return;
 
         try {
             DB::transaction(function () use ($txnRef, $rawQuery) {
                 $order = Order::where('vnp_TxnRef', $txnRef)->lockForUpdate()->first();
-                if (!$order)
+                if (!$order) {
                     $order = Order::where('order_code', $txnRef)->lockForUpdate()->first();
-                if (!$order)
-                    return;
+                }
+                if (!$order) return;
 
                 if ($order->payment_status === Order::PAYMENT_SUCCESS) {
                     // đã success thì không downgrade
@@ -411,8 +471,9 @@ class VNPayController extends Controller
     {
         for ($i = 0; $i < 10; $i++) {
             $code = 'ORD-' . now()->format('Ymd') . '-' . Str::upper(Str::random(6));
-            if (!Order::where('order_code', $code)->exists())
+            if (!Order::where('order_code', $code)->exists()) {
                 return $code;
+            }
         }
         return 'ORD-' . now()->format('YmdHis') . '-' . Str::upper(Str::random(8));
     }
@@ -424,10 +485,8 @@ class VNPayController extends Controller
 
     private function asArray($value): ?array
     {
-        if ($value === null)
-            return null;
-        if (is_array($value))
-            return $value;
+        if ($value === null) return null;
+        if (is_array($value)) return $value;
 
         if (is_string($value)) {
             $decoded = json_decode($value, true);
