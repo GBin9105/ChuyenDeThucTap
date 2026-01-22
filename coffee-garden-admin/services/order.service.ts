@@ -20,18 +20,25 @@ export type ApiResponse<T> = {
 
 /**
  * VNPay init response (POST /api/payment/vnpay)
+ * BE của bạn hiện tại trả dạng:
+ * {
+ *   code: "00",
+ *   message: "success",
+ *   payment_url: "...",
+ *   vnp_TxnRef: "...",
+ *   order_id: 123,
+ *   order_code: "ORD-..."
+ * }
  */
 export type VNPayInitResponse = {
-  status: boolean;
+  code: string; // "00" success
   message?: string;
   payment_url: string;
   vnp_TxnRef: string;
-  vnp_Amount: number;
+  order_id?: number;
+  order_code?: string;
 };
 
-/**
- * Order / OrderDetail theo schema bạn đang dùng
- */
 export type OrderDetail = {
   id: number;
   order_id: number;
@@ -104,9 +111,24 @@ export type Order = {
 };
 
 /**
+ * Response của GET /api/orders/{id}/items theo code BE bạn gửi:
+ * {
+ *   status: true,
+ *   data: {
+ *     order: { ... },
+ *     items: [ ... ]
+ *   }
+ * }
+ */
+export type OrderItemsResponse = {
+  order: Order;
+  items: OrderDetail[];
+};
+
+/**
  * FE payload:
- * - COD: POST /orders (BE tự lấy cart, KHÔNG nhận items)
- * - VNPay: POST /payment/vnpay (BE snapshot cart + trả payment_url)
+ * - COD: POST /orders
+ * - VNPay: POST /payment/vnpay
  */
 export type CheckoutReceiverPayload = {
   name: string;
@@ -123,6 +145,53 @@ export type CreateCodOrderPayload = CheckoutReceiverPayload & {
 export type CreateVNPayPayload = CheckoutReceiverPayload;
 
 /**
+ * COD actions payload (tuỳ bạn có dùng hay không)
+ * Nếu BE không nhận body, bạn cứ gọi không payload vẫn OK.
+ */
+export type CancelOrderPayload = {
+  reason?: string | null;
+  note?: string | null;
+};
+
+/**
+ * =========================================================
+ * Helpers
+ * =========================================================
+ */
+function assertApiOk<T>(resp: ApiResponse<T>): ApiResponse<T> {
+  if (!resp?.status) {
+    const msg = resp?.message || "Request failed";
+    throw new Error(msg);
+  }
+  return resp;
+}
+
+function normalizeVNPayResponse(raw: any): VNPayInitResponse {
+  // Nếu BE trả đúng như code bạn gửi: { code: "00", payment_url, vnp_TxnRef, ... }
+  if (raw && typeof raw === "object" && typeof raw.code === "string") {
+    return raw as VNPayInitResponse;
+  }
+
+  // Fallback (phòng khi bạn từng dùng format {status:boolean,...})
+  // Cố gắng map các field tương đương nếu có
+  const payment_url = raw?.payment_url ?? raw?.data?.payment_url;
+  const vnp_TxnRef = raw?.vnp_TxnRef ?? raw?.data?.vnp_TxnRef;
+
+  if (!payment_url || !vnp_TxnRef) {
+    throw new Error(raw?.message || "VNPay response invalid");
+  }
+
+  return {
+    code: raw?.code ?? (raw?.status ? "00" : "99"),
+    message: raw?.message,
+    payment_url,
+    vnp_TxnRef,
+    order_id: raw?.order_id ?? raw?.data?.order_id,
+    order_code: raw?.order_code ?? raw?.data?.order_code,
+  };
+}
+
+/**
  * =========================================================
  * Service
  * =========================================================
@@ -133,7 +202,7 @@ export const orderService = {
    */
   async getMyOrders() {
     const { data } = await api.get<ApiResponse<Order[]>>("/orders");
-    return data;
+    return assertApiOk(data).data;
   },
 
   /**
@@ -141,24 +210,23 @@ export const orderService = {
    */
   async getMyOrder(id: number) {
     const { data } = await api.get<ApiResponse<Order>>(`/orders/${id}`);
-    return data;
+    return assertApiOk(data).data;
   },
 
   /**
    * GET /api/orders/{id}/items
-   * (route đang có trong api.php)
+   * BE trả data: { order, items }
    */
   async getMyOrderItems(orderId: number) {
-    const { data } = await api.get<ApiResponse<OrderDetail[]>>(
+    const { data } = await api.get<ApiResponse<OrderItemsResponse>>(
       `/orders/${orderId}/items`
     );
-    return data;
+    return assertApiOk(data).data; // {order, items}
   },
 
   /**
    * COD checkout:
    * POST /api/orders
-   * - BE sẽ đọc cart của user hiện tại, tự tính totals, tạo order + order_details, rồi clear cart
    */
   async createCodOrder(payload: CreateCodOrderPayload) {
     const body = {
@@ -171,13 +239,12 @@ export const orderService = {
     };
 
     const { data } = await api.post<ApiResponse<Order>>("/orders", body);
-    return data;
+    return assertApiOk(data).data;
   },
 
   /**
    * VNPay init:
    * POST /api/payment/vnpay
-   * - BE snapshot cart, tạo payment_transactions pending, trả payment_url để FE redirect
    */
   async createVNPayPayment(payload: CreateVNPayPayload) {
     const body = {
@@ -188,7 +255,35 @@ export const orderService = {
       note: payload.note ?? null,
     };
 
-    const { data } = await api.post<VNPayInitResponse>("/payment/vnpay", body);
-    return data;
+    const res = await api.post("/payment/vnpay", body);
+    return normalizeVNPayResponse(res.data);
+  },
+
+  /**
+   * COD: Client bấm "Đã nhận"
+   * PATCH /api/orders/{id}/received
+   */
+  async markReceived(orderId: number) {
+    const { data } = await api.patch<ApiResponse<Order>>(
+      `/orders/${orderId}/received`
+    );
+    return assertApiOk(data).data;
+  },
+
+  /**
+   * COD: Client bấm "Hủy đơn"
+   * PATCH /api/orders/{id}/cancel
+   */
+  async cancel(orderId: number, payload?: CancelOrderPayload) {
+    const body = {
+      reason: payload?.reason ?? null,
+      note: payload?.note ?? null,
+    };
+
+    const { data } = await api.patch<ApiResponse<Order>>(
+      `/orders/${orderId}/cancel`,
+      body
+    );
+    return assertApiOk(data).data;
   },
 };

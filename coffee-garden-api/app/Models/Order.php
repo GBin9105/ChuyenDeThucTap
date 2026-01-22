@@ -13,6 +13,24 @@ class Order extends Model
 
     /**
      * =========================================================
+     * CONSTANTS – PAYMENT
+     * =========================================================
+     */
+    public const PAYMENT_PENDING = 'pending';
+    public const PAYMENT_SUCCESS = 'success';
+    public const PAYMENT_FAILED  = 'failed';
+
+    /**
+     * =========================================================
+     * CONSTANTS – ORDER STATUS (tinyint)
+     * =========================================================
+     */
+    public const STATUS_PENDING  = 1;
+    public const STATUS_PAID     = 2;
+    public const STATUS_CANCELED = 3;
+
+    /**
+     * =========================================================
      * FILLABLE
      * =========================================================
      */
@@ -38,6 +56,9 @@ class Order extends Model
         // paid time
         'paid_at',
 
+        // ✅ chống trừ kho 2 lần
+        'inventory_deducted_at',
+
         // business status (tinyint)
         'status',             // 1 pending | 2 paid | 3 canceled
 
@@ -58,28 +79,12 @@ class Order extends Model
         'extras_total' => 'decimal:2',
         'total_price'  => 'decimal:2',
 
-        'paid_at' => 'datetime',
+        'paid_at'               => 'datetime',
+        'inventory_deducted_at' => 'datetime',
+
         'status'  => 'integer',
         'user_id' => 'integer',
     ];
-
-    /**
-     * =========================================================
-     * CONSTANTS – PAYMENT
-     * =========================================================
-     */
-    public const PAYMENT_PENDING = 'pending';
-    public const PAYMENT_SUCCESS = 'success';
-    public const PAYMENT_FAILED  = 'failed';
-
-    /**
-     * =========================================================
-     * CONSTANTS – ORDER STATUS (tinyint)
-     * =========================================================
-     */
-    public const STATUS_PENDING  = 1;
-    public const STATUS_PAID     = 2;
-    public const STATUS_CANCELED = 3;
 
     /**
      * =========================================================
@@ -111,9 +116,19 @@ class Order extends Model
         return (string) $this->payment_status === self::PAYMENT_SUCCESS;
     }
 
+    public function isPaymentPending(): bool
+    {
+        return (string) $this->payment_status === self::PAYMENT_PENDING;
+    }
+
     public function isPaidOrder(): bool
     {
         return (int) $this->status === self::STATUS_PAID;
+    }
+
+    public function isPendingOrder(): bool
+    {
+        return (int) $this->status === self::STATUS_PENDING;
     }
 
     public function isCanceled(): bool
@@ -121,8 +136,57 @@ class Order extends Model
         return (int) $this->status === self::STATUS_CANCELED;
     }
 
+    public function isCod(): bool
+    {
+        return (string) $this->payment_method === 'cod';
+    }
+
+    public function isVnpay(): bool
+    {
+        return (string) $this->payment_method === 'vnpay';
+    }
+
+    /**
+     * Đơn có thể trừ kho không (theo business logic chung):
+     * - đã payment success
+     * - không bị cancel
+     */
     public function canReduceStock(): bool
     {
         return $this->isPaymentSuccess() && !$this->isCanceled();
+    }
+
+    /**
+     * ✅ đã trừ kho chưa (chống double-deduct)
+     */
+    public function isInventoryDeducted(): bool
+    {
+        return !empty($this->inventory_deducted_at);
+    }
+
+    /**
+     * ✅ COD: client có thể bấm "Đã nhận" khi:
+     * - COD
+     * - status pending
+     * - chưa canceled
+     */
+    public function canConfirmReceived(): bool
+    {
+        return $this->isCod() && $this->isPendingOrder() && !$this->isCanceled();
+    }
+
+    /**
+     * ✅ COD: client có thể hủy khi:
+     * - COD
+     * - status pending
+     * - chưa trừ kho
+     * - chưa canceled
+     */
+    public function canCancelByClient(): bool
+    {
+        return $this->isCod()
+            && $this->isPendingOrder()
+            && !$this->isCanceled()
+            && !$this->isInventoryDeducted();
     }
 }

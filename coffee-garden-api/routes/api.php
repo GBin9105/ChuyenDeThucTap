@@ -31,8 +31,7 @@ use App\Http\Controllers\Api\OptionController;
 /*
 |--------------------------------------------------------------------------
 | CLIENT (AUTH)
-|---
------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 */
 use App\Http\Controllers\Api\CartController;
 use App\Http\Controllers\Api\OrderController;
@@ -149,6 +148,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/orders',     [OrderController::class, 'store']);
     Route::get('/orders',      [OrderController::class, 'index']);
     Route::get('/orders/{id}', [OrderController::class, 'show'])->whereNumber('id');
+
+    // ✅ COD: client xác nhận đã nhận hàng (trừ kho + gửi mail + set paid)
+    Route::patch('/orders/{id}/received', [OrderController::class, 'markReceived'])
+        ->whereNumber('id');
+
+    // ✅ COD: client hủy đơn (chỉ khi pending và chưa trừ kho)
+    Route::patch('/orders/{id}/cancel', [OrderController::class, 'cancel'])
+        ->whereNumber('id');
 
     /* ---------- Order Items (User) ---------- */
     Route::get('/orders/{id}/items', [OrderDetailController::class, 'index'])->whereNumber('id');

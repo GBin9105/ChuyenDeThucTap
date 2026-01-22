@@ -107,17 +107,14 @@ export default function CheckoutPage() {
       const u = res?.data?.user; // AuthController@me trả { user: ... }
       if (!u) return;
 
-      // chỉ set nếu field đang trống (không ghi đè user đang nhập)
       setName((prev) => prev || (u?.name ?? ""));
       setPhone((prev) => prev || (u?.phone ?? ""));
       setEmail((prev) => prev || (u?.email ?? ""));
 
-      // sync localStorage cho các trang khác dùng
       try {
         localStorage.setItem("user", JSON.stringify(u));
       } catch {}
     } catch (e) {
-      // không đăng nhập / token hết hạn -> bỏ qua
       console.log("prefill /auth/me failed:", e);
     }
   };
@@ -158,24 +155,9 @@ export default function CheckoutPage() {
 
   const computed = useMemo(() => {
     const countLines = lines.length;
-    const countItems = lines.reduce((s, x) => s + Number(x?.qty ?? 0), 0);
-    const grand = lines.reduce((s, x) => s + Number(x?.line_total ?? 0), 0);
+    const countItems = lines.reduce((s, x) => s + Number((x as any)?.qty ?? 0), 0);
+    const grand = lines.reduce((s, x) => s + Number((x as any)?.line_total ?? 0), 0);
     return { countLines, countItems, grand };
-  }, [lines]);
-
-  const orderItems = useMemo(() => {
-    return (lines ?? []).map((l: any) => ({
-      product_id: Number(l.product_id),
-      qty: Number(l.qty ?? 1),
-      quantity: Number(l.qty ?? 1),
-      price: Number(l.unit_price ?? 0),
-
-      size_id: l.size_id ?? null,
-      options: l.options ?? null,
-      toppings: l.toppings ?? null,
-      attribute_values: l.attribute_values ?? null,
-      attribute_value_ids: l.attribute_value_ids ?? null,
-    }));
   }, [lines]);
 
   const validateForm = () => {
@@ -195,6 +177,7 @@ export default function CheckoutPage() {
 
     setSubmitting(true);
     try {
+      // ✅ VNPay: theo flow bạn đang dùng
       if (paymentMethod === "vnpay") {
         await paymentService.createAndRedirect({
           name: name.trim(),
@@ -206,15 +189,23 @@ export default function CheckoutPage() {
         return;
       }
 
-      const { data } = await api.post("/orders", {
-        name: name.trim(),
-        phone: phone.trim(),
-        email: email.trim() ? email.trim() : null,
-        address: address.trim(),
-        note: note?.trim() ? note.trim() : null,
-        payment_method: "cod",
-        items: orderItems,
-      });
+      // ✅ COD: backend của bạn tạo order từ Cart trong DB => KHÔNG gửi items
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+      const { data } = await api.post(
+        "/orders",
+        {
+          name: name.trim(),
+          phone: phone.trim(),
+          email: email.trim() ? email.trim() : null,
+          address: address.trim(),
+          note: note?.trim() ? note.trim() : null,
+          payment_method: "cod",
+        },
+        token
+          ? { headers: { Authorization: `Bearer ${token}` } }
+          : undefined
+      );
 
       const order = data?.data?.data || data?.data || data;
 
@@ -400,8 +391,8 @@ export default function CheckoutPage() {
                   <h2 className="text-lg font-semibold text-slate-900">Sản phẩm</h2>
 
                   <div className="mt-4 space-y-3">
-                    {lines.map((line) => {
-                      const p: any = (line as any).product || {};
+                    {lines.map((line: any) => {
+                      const p: any = line?.product || {};
                       const img = getProductImage(p);
 
                       return (
@@ -426,18 +417,15 @@ export default function CheckoutPage() {
 
                           <div className="flex-1">
                             <div className="font-semibold text-slate-900">
-                              {p?.name ?? `Product#${(line as any).product_id}`}
+                              {p?.name ?? `Product#${line?.product_id}`}
                             </div>
                             <div className="mt-1 text-sm text-slate-600">
-                              Qty:{" "}
-                              <b className="text-slate-900">{Number((line as any).qty ?? 1)}</b> •
-                              Unit:{" "}
-                              <b className="text-slate-900">{currencyVND((line as any).unit_price)}</b>
-                              {(line as any).size_name ? (
+                              Qty: <b className="text-slate-900">{Number(line?.qty ?? 1)}</b> • Unit:{" "}
+                              <b className="text-slate-900">{currencyVND(line?.unit_price)}</b>
+                              {line?.size_name ? (
                                 <>
                                   {" "}
-                                  • Size:{" "}
-                                  <b className="text-slate-900">{(line as any).size_name}</b>
+                                  • Size: <b className="text-slate-900">{line.size_name}</b>
                                 </>
                               ) : null}
                             </div>
@@ -446,7 +434,7 @@ export default function CheckoutPage() {
                           <div className="text-right">
                             <div className="text-sm text-slate-600">Line total</div>
                             <div className="text-base font-semibold text-slate-900">
-                              {currencyVND((line as any).line_total)}
+                              {currencyVND(line?.line_total)}
                             </div>
                           </div>
                         </div>

@@ -78,14 +78,14 @@ export default function HomePage() {
         ) : (
           <CategoryMenu
             categories={categories}
-            mode="navigate"   // 👈 QUAN TRỌNG
+            mode="navigate"   
           />
         )}
 
         {/* ================= FEATURED PRODUCTS ================= */}
         <h2 className="mt-16 mb-6 w-full flex justify-center">
           <span className="shine-title">
-            SẢN PHẨM NỔI BẬT
+            SẢN PHẨM MỚI
           </span>
         </h2>
 
